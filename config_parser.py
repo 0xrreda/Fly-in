@@ -37,11 +37,6 @@ class ConfigSyntaxError(Exception):
 
 
 class ConfigParser:
-    HUB_KINDS: dict[str, str] = {
-        "start_hub": "start",
-        "end_hub": "end",
-        "hub": "hub",
-    }
     VALID_METADATA_KEYS: dict[str, frozenset[str]] = {
         "hub": frozenset(
             {
@@ -52,6 +47,9 @@ class ConfigParser:
         ),
         "connection": frozenset({"max_link_capacity"}),
     }
+    VALID_ZONE_NAMES: frozenset[str] = frozenset(
+        {"normal", "blocked", "restricted", "priority"}
+    )
 
     @staticmethod
     def _loads_file(path: str) -> list[str]:
@@ -109,6 +107,7 @@ class ConfigParser:
 
     def parse(self, path: str = "maps/easy/01_linear_path.txt") -> MapConfig:
         config = MapConfig()
+        used_hubs: set[str] = set()
 
         for lineno, raw in enumerate(self._loads_file(path), start=1):
             line = raw.split("#")[0].strip()
@@ -123,16 +122,21 @@ class ConfigParser:
                 if keyword == "nb_drones":
                     try:
                         config.nb_drones = int(attrs)
+                        if config.nb_drones <= 0:
+                            raise ValueError("Invalid value for 'nb_drones'")
                     except ValueError:
                         raise ValueError(
                             "Invalid value for 'nb_drones'",
-                            f"Expected an integer, got '{attrs}'",
+                            f"Expected an positive integer, got '{attrs}'",
                         )
 
-                elif (
-                    keyword in ConfigParser.HUB_KINDS
-                    or keyword == "connection"
-                ):
+                elif keyword in {"start_hub", "end_hub", "hub", "connection"}:
+                    if config.nb_drones == 0:
+                        raise ValueError(
+                            "Missing 'nb_drones'",
+                            "Expected the number of drones to be on the first"
+                            + " line: 'nb_drones: <positive_integer>'",
+                        )
                     attrs, meta_attrs = self._split_attrs(keyword, attrs)
                     parts = attrs.split()
                     if keyword == "connection":
@@ -175,11 +179,45 @@ class ConfigParser:
                                 + f", got '{parts[0]}'",
                             )
 
+                        if keyword in {"start_hub", "end_hub"}:
+                            if keyword in used_hubs:
+                                raise ValueError(
+                                    "There must be exactly one 'start_hub'"
+                                    + " and one 'end_hub'"
+                                )
+                            else:
+                                used_hubs.add(keyword)
+
+                        name, x, y = parts
+
+                        if name in config.hubs:
+                            raise ValueError(
+                                "Each zone must have a unique name "
+                            )
+                        if int(x) < 0 or int(y) < 0:
+                            raise ValueError(
+                                "Each zone must have a valid coordinates"
+                            )
+
+                        if (
+                            meta_attrs.get("zone")
+                            and meta_attrs.get("zone")
+                            not in ConfigParser.VALID_ZONE_NAMES
+                        ):
+                            raise ValueError(
+                                "Invalid zone type",
+                                "Expected one of: "
+                                + ", ".join(
+                                    f"'{name}'"
+                                    for name in ConfigParser.VALID_ZONE_NAMES
+                                )
+                                + f", got '{meta_attrs['zone']}'",
+                            )
                         hub = Hub(
-                            name=parts[0],
-                            x=int(parts[1]),
-                            y=int(parts[2]),
-                            type=ConfigParser.HUB_KINDS[keyword],
+                            name=name,
+                            x=int(x),
+                            y=int(y),
+                            type=keyword,
                             color=meta_attrs.get("color", "none"),
                             zone=meta_attrs.get("zone", "normal"),
                             max_drones=int(meta_attrs.get("max_drones", 1)),
