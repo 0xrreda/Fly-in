@@ -172,7 +172,7 @@ class ConfigParser:
                                 "Expected format: '<hub type>: <name> <x> <y>"
                                 + " [metadata]' (metadata is optional)",
                             )
-                        if not parts[0].isalnum():
+                        if "-" in parts[0]:
                             raise ValueError(
                                 "Invalid zone name",
                                 "Expected a valid alphanumeric string"
@@ -193,10 +193,6 @@ class ConfigParser:
                         if name in config.hubs:
                             raise ValueError(
                                 "Each zone must have a unique name "
-                            )
-                        if int(x) < 0 or int(y) < 0:
-                            raise ValueError(
-                                "Each zone must have a valid coordinates"
                             )
 
                         if (
