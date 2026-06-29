@@ -22,14 +22,14 @@ class Graph:
     def get_hub(self, name: str) -> Hub:
         return self._hubs[name]
 
-    def get_route_endpoints(self) -> tuple[Hub, Hub]:
+    def get_route_endpoints(self) -> tuple[str, str]:
         start_hub = next(
             hub for hub in self._hubs.values() if hub.type == "start_hub"
         )
         end_hub = next(
             hub for hub in self._hubs.values() if hub.type == "end_hub"
         )
-        return start_hub, end_hub
+        return start_hub.name, end_hub.name
 
     def neighbors(self, hub: str) -> list[tuple[str, Connection]]:
         return self._adj.get(hub, [])
