@@ -155,7 +155,9 @@ from __future__ import annotations
 
 from heapq import heappop, heappush
 
+# A timed position: which hub, at which turn.
 State = tuple[str, int]
+# A link, stored order-independent so (A,B) == (B,A).
 LinkKey = tuple[str, str]
 
 
@@ -164,208 +166,173 @@ class Algo:
         self.graph = graph
         self.time_horizon = time_horizon
 
-        # {(hub_name, turn): nb_drones}
-        self.hub_occupancy: dict[State, int] = {}
+        # How many drones occupy a hub at a given turn.
+        self.hub_usage: dict[State, int] = {}
+        # How many drones occupy a link at a given turn.
+        self.link_usage: dict[tuple[LinkKey, int], int] = {}
 
-        # {((hub_a, hub_b), turn): nb_drones}
-        self.link_occupancy: dict[tuple[LinkKey, int], int] = {}
+    # ------------------------------------------------------------------ #
+    # Planning                                                           #
+    # ------------------------------------------------------------------ #
 
-    def dijkstra_mapf(self, start: str, end: str) -> list[State]:
+    def plan_all(
+        self, requests: list[tuple[int, str, str]]
+    ) -> dict[int, list[State]]:
+        """Plan every drone one by one; each new plan respects earlier ones."""
+        plans: dict[int, list[State]] = {}
+
+        for drone_id, start, end in requests:
+            path = self.find_path(start, end)
+            if not path:
+                raise ValueError(f"No path found for drone {drone_id}")
+            self.reserve(path)
+            plans[drone_id] = path
+
+        return plans
+
+    def find_path(self, start: str, end: str) -> list[State]:
+        """Space-time Dijkstra. Returns a list of (hub, turn) states."""
         if self.graph.is_blocked(start) or self.graph.is_blocked(end):
             return []
 
         start_state: State = (start, 0)
 
-        # (turn, preference_cost, hub_name)
-        pq: list[tuple[int, float, str]] = [(0, 0.0, start)]
-
+        # Queue entries are (turn, pref_cost, hub).
+        # Sorted by turn first -> earliest arrival wins.
+        queue: list[tuple[int, float, str]] = [(0, 0.0, start)]
         best_cost: dict[State, float] = {start_state: 0.0}
-        parent: dict[State, State | None] = {start_state: None}
+        came_from: dict[State, State | None] = {start_state: None}
 
-        while pq:
-            turn, cost, hub_name = heappop(pq)
-            state: State = (hub_name, turn)
+        while queue:
+            turn, cost, hub = heappop(queue)
+            state: State = (hub, turn)
 
+            # Skip outdated queue entries (we found something better since).
             if cost > best_cost.get(state, float("inf")):
                 continue
 
-            if hub_name == end:
-                return self._reconstruct_path(parent, state)
+            # First time we pop the goal, it's optimal -> done.
+            if hub == end:
+                return self._rebuild(came_from, state)
 
+            # Don't explore past the time ceiling.
             if turn >= self.time_horizon:
                 continue
 
-            # 1. Wait action
-            wait_turn = turn + 1
-            wait_state: State = (hub_name, wait_turn)
-
-            if wait_turn <= self.time_horizon and self._can_wait(
-                hub_name,
-                turn,
-            ):
-                if cost < best_cost.get(wait_state, float("inf")):
-                    best_cost[wait_state] = cost
-                    parent[wait_state] = state
-                    heappush(pq, (wait_turn, cost, hub_name))
-
-            # 2. Move actions
-            for neighbor_name, connection in self.graph.neighbors(hub_name):
-                if self.graph.is_blocked(neighbor_name):
-                    continue
-
-                duration = self._move_duration(neighbor_name)
-                next_turn = turn + duration
-                next_state: State = (neighbor_name, next_turn)
-
-                if next_turn > self.time_horizon:
-                    continue
-
-                if not self._can_move(
-                    hub_name,
-                    neighbor_name,
-                    connection,
-                    turn,
-                ):
-                    continue
-
-                next_cost = cost + self.graph.move_cost(neighbor_name)
-
+            for next_state, next_cost in self._successors(state, cost):
                 if next_cost < best_cost.get(next_state, float("inf")):
                     best_cost[next_state] = next_cost
-                    parent[next_state] = state
-                    heappush(pq, (next_turn, next_cost, neighbor_name))
+                    came_from[next_state] = state
+                    next_hub, next_turn = next_state
+                    heappush(queue, (next_turn, next_cost, next_hub))
 
         return []
 
-    def commit_reservation(self, path: list[State]) -> None:
-        for prev_state, curr_state in zip(path, path[1:]):
-            prev_hub, prev_turn = prev_state
-            curr_hub, curr_turn = curr_state
+    def _successors(self, state: State, cost: float):
+        """Yield (next_state, next_cost) for waiting and for each legal move."""
+        hub, turn = state
 
-            # Drone waited
-            if prev_hub == curr_hub:
-                self._reserve_hub(curr_hub, curr_turn)
+        # 1. Wait: same hub, +1 turn, no extra preference cost.
+        wait_turn = turn + 1
+        if wait_turn <= self.time_horizon and self._can_wait(hub, turn):
+            yield (hub, wait_turn), cost
+
+        # 2. Move: go to a neighbor if reservations allow it.
+        for neighbor, connection in self.graph.neighbors(hub):
+            if self.graph.is_blocked(neighbor):
                 continue
 
-            duration = curr_turn - prev_turn
+            duration = self._move_duration(neighbor)
+            arrival = turn + duration
+            if arrival > self.time_horizon:
+                continue
+            if not self._can_move(hub, neighbor, connection, turn):
+                continue
 
-            # Normal move: reserve link at prev_turn
-            self._reserve_link(prev_hub, curr_hub, prev_turn)
+            yield (neighbor, arrival), cost + self.graph.move_cost(neighbor)
 
-            # Restricted move: also reserve link at prev_turn + 1
-            if duration == 2:
-                self._reserve_link(prev_hub, curr_hub, prev_turn + 1)
+    # ------------------------------------------------------------------ #
+    # Reservations                                                       #
+    # ------------------------------------------------------------------ #
 
-            # Reserve arrival hub
-            self._reserve_hub(curr_hub, curr_turn)
+    def reserve(self, path: list[State]) -> None:
+        """Mark a committed path so later drones avoid collisions."""
+        for (prev_hub, prev_turn), (hub, turn) in zip(path, path[1:]):
+            if prev_hub == hub:  # the drone waited
+                self._reserve_hub(hub, turn)
+                continue
 
-    def plan_all(
-        self,
-        drone_requests: list[tuple[int, str, str]],
-    ) -> dict[int, list[State]]:
-        plans: dict[int, list[State]] = {}
+            # Occupy the link for the whole duration of the move.
+            duration = turn - prev_turn
+            for t in range(prev_turn, prev_turn + duration):
+                self._reserve_link(prev_hub, hub, t)
 
-        for drone_id, start, end in drone_requests:
-            path = self.dijkstra_mapf(start, end)
+            self._reserve_hub(hub, turn)
 
-            if not path:
-                raise ValueError(f"No path found for drone {drone_id}")
+    # ------------------------------------------------------------------ #
+    # Capacity checks                                                    #
+    # ------------------------------------------------------------------ #
 
-            self.commit_reservation(path)
-            plans[drone_id] = path
-
-        return plans
-
-    def _reconstruct_path(
-        self,
-        parent: dict[State, State | None],
-        end_state: State,
-    ) -> list[State]:
-        path: list[State] = []
-        curr: State | None = end_state
-
-        while curr is not None:
-            path.append(curr)
-            curr = parent[curr]
-
-        return path[::-1]
-
-    def _can_wait(self, hub_name: str, turn: int) -> bool:
-        return self._hub_has_capacity(hub_name, turn + 1)
+    def _can_wait(self, hub: str, turn: int) -> bool:
+        # Can the drone still be in this hub next turn?
+        return self._hub_free(hub, turn + 1)
 
     def _can_move(
-        self,
-        source: str,
-        target: str,
-        connection: Connection,
-        turn: int,
+        self, source: str, target: str, connection: Connection, turn: int
     ) -> bool:
         duration = self._move_duration(target)
 
-        if not self._link_has_capacity(
-            source,
-            target,
-            turn,
-            connection.max_link_capacity,
-        ):
-            return False
-
-        if duration == 2:
-            if not self._link_has_capacity(
-                source,
-                target,
-                turn + 1,
-                connection.max_link_capacity,
-            ):
+        # The link must be free for every turn the move spans.
+        for t in range(turn, turn + duration):
+            if not self._link_free(source, target, t,
+                                   connection.max_link_capacity):
                 return False
 
-        arrival_turn = turn + duration
-        return self._hub_has_capacity(target, arrival_turn)
+        # And the destination hub must be free on arrival.
+        return self._hub_free(target, turn + duration)
 
-    def _hub_has_capacity(self, hub_name: str, turn: int) -> bool:
-        if self._is_unlimited_hub(hub_name):
+    def _hub_free(self, hub: str, turn: int) -> bool:
+        if self._is_unlimited(hub):
             return True
+        used = self.hub_usage.get((hub, turn), 0)
+        return used < self.graph.get_hub(hub).max_drones
 
-        hub = self.graph.get_hub(hub_name)
-        used = self.hub_occupancy.get((hub_name, turn), 0)
+    def _link_free(self, source: str, target: str, turn: int,
+                   capacity: int) -> bool:
+        used = self.link_usage.get((self._link_key(source, target), turn), 0)
+        return used < capacity
 
-        return used < hub.max_drones
-
-    def _link_has_capacity(
-        self,
-        source: str,
-        target: str,
-        turn: int,
-        max_capacity: int,
-    ) -> bool:
-        key = (self._link_key(source, target), turn)
-        used = self.link_occupancy.get(key, 0)
-
-        return used < max_capacity
-
-    def _reserve_hub(self, hub_name: str, turn: int) -> None:
-        if self._is_unlimited_hub(hub_name):
+    def _reserve_hub(self, hub: str, turn: int) -> None:
+        if self._is_unlimited(hub):
             return
-
-        key = (hub_name, turn)
-        self.hub_occupancy[key] = self.hub_occupancy.get(key, 0) + 1
+        key = (hub, turn)
+        self.hub_usage[key] = self.hub_usage.get(key, 0) + 1
 
     def _reserve_link(self, source: str, target: str, turn: int) -> None:
         key = (self._link_key(source, target), turn)
-        self.link_occupancy[key] = self.link_occupancy.get(key, 0) + 1
+        self.link_usage[key] = self.link_usage.get(key, 0) + 1
 
-    def _move_duration(self, target_hub_name: str) -> int:
-        hub = self.graph.get_hub(target_hub_name)
+    # ------------------------------------------------------------------ #
+    # Small helpers                                                      #
+    # ------------------------------------------------------------------ #
 
-        if hub.zone == "restricted":
-            return 2
+    def _move_duration(self, target: str) -> int:
+        # Restricted zones take 2 turns to traverse; everything else takes 1.
+        return 2 if self.graph.get_hub(target).zone == "restricted" else 1
 
-        return 1
-
-    def _is_unlimited_hub(self, hub_name: str) -> bool:
-        hub = self.graph.get_hub(hub_name)
-        return hub.type in {"start_hub", "end_hub"}
+    def _is_unlimited(self, hub: str) -> bool:
+        return self.graph.get_hub(hub).type in {"start_hub", "end_hub"}
 
     def _link_key(self, source: str, target: str) -> LinkKey:
         return (source, target) if source < target else (target, source)
+
+    def _rebuild(
+        self, came_from: dict[State, State | None], end_state: State
+    ) -> list[State]:
+        path: list[State] = []
+        node: State | None = end_state
+        while node is not None:
+            path.append(node)
+            node = came_from[node]
+        return path[::-1]
 ```
