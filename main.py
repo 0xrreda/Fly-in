@@ -5,9 +5,7 @@ from graph import Graph
 
 if __name__ == "__main__":
     try:
-        config = ConfigParser().parse(
-            "./maps/challenger/01_the_impossible_dream.txt"
-        )
+        config = ConfigParser().parse("./map.txt")
     except FileNotFoundError as e:
         print(f"[ERROR]: File not found — {e.filename}")
         exit(1)
@@ -19,7 +17,6 @@ if __name__ == "__main__":
         exit(1)
 
     graph = Graph(config)
-
     routes = Algo(graph).generate_routes(config.nb_drones)
 
     for drone_id, route in routes.items():
