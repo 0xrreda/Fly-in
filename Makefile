@@ -7,7 +7,7 @@ install:
 	uv sync
 
 run:
-	clear && $(RUN) $(NAME)
+	$(RUN) $(NAME)
 
 debug:
 	$(RUN) -m pdb $(NAME)

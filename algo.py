@@ -1,7 +1,7 @@
 from queue import PriorityQueue
 
 from graph import Graph
-
+from models import Connection
 
 State = tuple[str, int]
 
@@ -24,61 +24,9 @@ class Algo:
                 raise ValueError(f"No path found for drone {drone_id}")
 
             self._reserve_path(path)
-
             routes[drone_id] = path
 
         return routes
-
-    def _dijkstra(self, start: str, end: str) -> list[State]:
-        priority_queue: PriorityQueue[tuple[int, float, str]] = PriorityQueue()
-        priority_queue.put((0, 0.0, start))
-
-        came_from: dict[State, State | None] = {(start, 0): None}
-        best_cost: dict[State, float] = {(start, 0): 0.0}
-
-        while not priority_queue.empty():
-            turn, cost, hub_name = priority_queue.get()
-            state: State = (hub_name, turn)
-
-            if cost > best_cost.get(state, float("inf")):
-                continue
-
-            if hub_name == end:
-                return self._rebuild(came_from, state)
-
-            if turn >= self.time_horizon:
-                continue
-
-            for neighbor, _ in self.graph.neighbors(hub_name):
-                if self.graph.is_blocked(neighbor):
-                    continue
-
-                duration = self._movement_duration(neighbor)
-
-                next_turn = turn + duration
-                next_cost = cost + self.graph.move_cost(neighbor)
-                if next_cost < best_cost.get(
-                    (neighbor, next_turn), float("inf")
-                ):
-                    priority_queue.put((next_turn, next_cost, neighbor))
-                    best_cost[(neighbor, next_turn)] = next_cost
-                    came_from[(neighbor, next_turn)] = (hub_name, turn)
-
-        return []
-
-    def _hub_available(self, hub_name: str, turn: int) -> bool:
-        hub = self.graph.get_hub(hub_name)
-        if hub.type in ("start_hub", "end_hub"):
-            return True
-        return self.hub_occupancy.get((hub_name, turn), 0) < hub.max_drones
-
-    def _connection_available(
-        self, a: str, b: str, depart_turn: int, arrive_turn: int, capacity: int
-    ) -> bool:
-        return all(
-            self.connection_occupancy.get(((a, b), t), 0) < capacity
-            for t in range(depart_turn + 1, arrive_turn + 1)
-        )
 
     def _reserve_path(self, path: list[State]) -> None:
         for (prev_hub, prev_turn), (hub, turn) in zip(path, path[1:]):
@@ -91,24 +39,85 @@ class Algo:
             if prev_hub == hub:
                 continue
 
-            # key = (prev_hub, hub) if prev_hub < hub else (hub, prev_hub)
+            key = self._connection_key(prev_hub, hub)
             for t in range(prev_turn + 1, turn + 1):
-                self.connection_occupancy[((prev_hub, hub), t)] = (
-                    self.connection_occupancy.get(((prev_hub, hub), t), 0) + 1
+                self.connection_occupancy[(key, t)] = (
+                    self.connection_occupancy.get((key, t), 0) + 1
                 )
 
-        print(f"hubs: {self.hub_occupancy}")
-        print(f"connection: {self.connection_occupancy}\n")
+    def _dijkstra(self, start: str, end: str) -> list[State]:
+        priority_queue: PriorityQueue[tuple[int, float, str]] = PriorityQueue()
+        priority_queue.put((0, 0.0, start))
 
-    def _movement_duration(self, neighbor: str) -> int:
-        return 2 if self.graph.get_hub(neighbor).zone == "restricted" else 1
+        came_from: dict[State, State | None] = {(start, 0): None}
+        best_cost: dict[State, float] = {(start, 0): 0.0}
 
+        while not priority_queue.empty():
+            turn, cost, hub_name = priority_queue.get()
+            state: State = (hub_name, turn)
+
+            if hub_name == end:
+                return self._rebuild(came_from, state)
+
+            for neighbor, conn in self.graph.neighbors(hub_name):
+                if self.graph.is_blocked(neighbor):
+                    continue
+
+                duration = (
+                    2
+                    if self.graph.get_hub(neighbor).zone == "restricted"
+                    else 1
+                )
+                next_turn = turn + duration
+
+                if self._is_over_capacity(neighbor, conn, next_turn):
+                    if cost < best_cost.get(
+                        (hub_name, next_turn), float("inf")
+                    ):
+                        priority_queue.put((next_turn, cost, hub_name))
+                        best_cost[(hub_name, next_turn)] = cost
+                        came_from[(hub_name, next_turn)] = (hub_name, turn)
+                    continue
+
+                next_cost = cost + self.graph.move_cost(neighbor)
+                if next_cost < best_cost.get(
+                    (neighbor, next_turn), float("inf")
+                ):
+                    priority_queue.put((next_turn, next_cost, neighbor))
+                    best_cost[(neighbor, next_turn)] = next_cost
+                    came_from[(neighbor, next_turn)] = state
+        return []
+
+    @staticmethod
+    def _connection_key(a: str, b: str) -> tuple[str, str]:
+        return (a, b) if a < b else (b, a)
+
+    def _is_over_capacity(
+        self, hub_name: str, conn: Connection, turn: int
+    ) -> bool:
+        hub = self.graph.get_hub(hub_name)
+        if hub.type in ("start_hub", "end_hub"):
+            return False
+
+        conn_key = self._connection_key(conn.source, conn.target)
+
+        conn_full = (
+            self.connection_occupancy.get((conn_key, turn), 0)
+            >= conn.max_link_capacity
+        )
+        hub_full = (
+            self.hub_occupancy.get((hub_name, turn), 0) >= hub.max_drones
+        )
+
+        return conn_full or hub_full
+
+    @staticmethod
     def _rebuild(
-        self, came_from: dict[State, State | None], end_state: State
+        came_from: dict[State, State | None], end_state: State
     ) -> list[State]:
         path: list[State] = []
-        node: State | None = end_state
-        while node is not None:
-            path.append(node)
-            node = came_from[node]
+        curr: State | None = end_state
+        while curr is not None:
+            path.append(curr)
+            curr = came_from[curr]
         return path[::-1]

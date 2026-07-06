@@ -1,0 +1,12 @@
+# Easy Level 1: Simple linear path
+nb_drones: 4
+
+start_hub: S 0 0
+hub: A 1 0 [max_drones=2]
+hub: B 1 1
+end_hub: E 2 0
+
+connection: S-A [max_link_capacity=2]
+connection: A-B
+connection: A-E 
+
