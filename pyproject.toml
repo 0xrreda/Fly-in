@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Design an efficient drone routing system that navigates multiple drones through connected zones while minimizing simulation turns and handling movement constraints."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "pygame>=2.6.1",
+]
 
 [dependency-groups]
 dev = [
