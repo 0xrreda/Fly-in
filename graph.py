@@ -11,6 +11,8 @@ class Graph:
 
     def __init__(self, config: MapConfig) -> None:
         self._hubs: dict[str, Hub] = dict(config.hubs)
+        self.hub_count: int = len(config.hubs)
+
         self._adj: dict[str, list[tuple[str, Connection]]] = {
             name: [] for name in config.hubs
         }
