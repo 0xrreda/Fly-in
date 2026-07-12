@@ -5,7 +5,7 @@ description = "Design an efficient drone routing system that navigates multiple 
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "pygame>=2.6.1",
+    "arcade>=3.3.3",
 ]
 
 [dependency-groups]

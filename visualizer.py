@@ -1,287 +1,233 @@
-"""Simple pygame visualizer for the drone routing algorithm.
+"""Minimal Arcade visualizer — watch drones move between hubs.
 
 Usage:
     uv run visualizer.py [map_file]
 
 Controls:
-    SPACE        play / pause
-    R            restart from turn 0
-    UP / DOWN    faster / slower
-    LEFT / RIGHT step one turn back / forward (auto-pauses)
-    ESC / close  quit
+    SPACE: Pause or resume
+    R: Restart
+    Q or ESCAPE: Quit
 """
 
 import sys
 
-import pygame
+import arcade
 
 from algo import Algo
-from config_parser import ConfigParser, ConfigSyntaxError
+from config_parser import ConfigParser
 from graph import Graph
-from models import Hub
 
-State = tuple[str, int]
-
-# --- window ---------------------------------------------------------------
-WIDTH, HEIGHT = 1000, 700
-MARGIN = 90
-HUB_RADIUS = 26
-DRONE_RADIUS = 11
-FPS = 60
-
-# --- colours --------------------------------------------------------------
-BG = (13, 17, 23)
-PANEL = (22, 27, 34)
-LINE = (48, 54, 61)
-TEXT = (230, 237, 243)
-MUTED = (139, 148, 158)
-
-ZONE_COLORS: dict[str, tuple[int, int, int]] = {
-    "normal": (48, 54, 61),
-    "restricted": (210, 153, 34),
-    "blocked": (72, 79, 88),
-    "priority": (137, 87, 229),
-}
-START_COLOR = (63, 185, 80)
-END_COLOR = (248, 81, 73)
-
-# distinct colours cycled across drones
-DRONE_COLORS: list[tuple[int, int, int]] = [
-    (88, 166, 255),
-    (255, 123, 114),
-    (63, 185, 80),
-    (255, 196, 61),
-    (210, 168, 255),
-    (121, 192, 255),
-    (255, 148, 112),
-    (86, 211, 194),
-]
+WIDTH = 1800
+HEIGHT = 800
+MARGIN = 80
+SPEED = 1.5  # Turns per second
 
 
-def hub_zone_color(hub: Hub) -> tuple[int, int, int]:
-    if hub.type == "start_hub":
-        return START_COLOR
-    if hub.type == "end_hub":
-        return END_COLOR
-    return ZONE_COLORS.get(hub.zone, ZONE_COLORS["normal"])
+def build_layout(hubs):
+    """Convert grid coordinates into screen coordinates."""
+    xs = [hub.x for hub in hubs.values()]
+    ys = [hub.y for hub in hubs.values()]
 
+    min_x = min(xs)
+    min_y = min(ys)
 
-def build_layout(
-    hubs: dict[str, Hub],
-) -> dict[str, tuple[float, float]]:
-    """Map grid (x, y) coordinates to screen pixels, auto-fitted."""
-    xs = [h.x for h in hubs.values()]
-    ys = [h.y for h in hubs.values()]
-    min_x, max_x = min(xs), max(xs)
-    min_y, max_y = min(ys), max(ys)
-    span_x = max_x - min_x or 1
-    span_y = max_y - min_y or 1
+    scale_x = (max(xs) - min_x) or 1
+    scale_y = (max(ys) - min_y) or 1
 
-    usable_w = WIDTH - 2 * MARGIN
-    usable_h = HEIGHT - 2 * MARGIN - 40  # leave room for the HUD strip
+    layout = {}
 
-    layout: dict[str, tuple[float, float]] = {}
     for name, hub in hubs.items():
-        fx = (hub.x - min_x) / span_x if max_x != min_x else 0.5
-        fy = (hub.y - min_y) / span_y if max_y != min_y else 0.5
-        px = MARGIN + fx * usable_w
-        py = MARGIN + 40 + fy * usable_h
-        layout[name] = (px, py)
+        pixel_x = MARGIN + (hub.x - min_x) / scale_x * (WIDTH - 2 * MARGIN)
+        pixel_y = MARGIN + (hub.y - min_y) / scale_y * (HEIGHT - 2 * MARGIN)
+
+        # Flip the y-coordinate so that up matches the map.
+        layout[name] = (pixel_x, HEIGHT - pixel_y)
+
     return layout
 
 
-def drone_position(
-    path: list[State],
-    layout: dict[str, tuple[float, float]],
-    t: float,
-) -> tuple[float, float] | None:
-    """Interpolated pixel position of a drone at (fractional) turn ``t``."""
-    if not path:
-        return None
-    if t <= path[0][1]:
-        return layout[path[0][0]]
-    if t >= path[-1][1]:
-        return layout[path[-1][0]]
+def drone_pos(path, layout, current_time):
+    """Return the interpolated position of a drone."""
+    if current_time <= path[0][1]:
+        first_hub = path[0][0]
+        return layout[first_hub]
 
-    for (hub_a, turn_a), (hub_b, turn_b) in zip(path, path[1:]):
-        if turn_a <= t <= turn_b:
-            frac = (t - turn_a) / (turn_b - turn_a) if turn_b > turn_a else 1.0
-            ax, ay = layout[hub_a]
-            bx, by = layout[hub_b]
-            return (ax + (bx - ax) * frac, ay + (by - ay) * frac)
-    return layout[path[-1][0]]
+    if current_time >= path[-1][1]:
+        last_hub = path[-1][0]
+        return layout[last_hub]
+
+    for (start_hub, start_time), (end_hub, end_time) in zip(
+        path,
+        path[1:],
+    ):
+        if start_time <= current_time <= end_time:
+            if end_time > start_time:
+                fraction = (current_time - start_time) / (
+                    end_time - start_time
+                )
+            else:
+                fraction = 1.0
+
+            start_x, start_y = layout[start_hub]
+            end_x, end_y = layout[end_hub]
+
+            x = start_x + (end_x - start_x) * fraction
+            y = start_y + (end_y - start_y) * fraction
+
+            return x, y
+
+    last_hub = path[-1][0]
+    return layout[last_hub]
 
 
-class Visualizer:
-    def __init__(self, map_file: str) -> None:
+class Visualizer(arcade.Window):
+    """Window that displays hubs, connections, and moving drones."""
+
+    def __init__(self, map_file):
+        super().__init__(
+            WIDTH,
+            HEIGHT,
+            f"Fly-in — {map_file}",
+        )
+
         config = ConfigParser().parse(map_file)
+
         self.graph = Graph(config)
-        self.routes: dict[int, list[State]] = Algo(self.graph).generate_routes(
-            config.nb_drones
-        )
-        self.map_file = map_file
-
+        self.routes = Algo(self.graph).generate_routes(config.nb_drones)
         self.layout = build_layout(self.graph._hubs)
+
         self.max_turn = max(
-            (path[-1][1] for path in self.routes.values() if path),
-            default=0,
+            path[-1][1] for path in self.routes.values() if path
         )
 
-        pygame.init()
-        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
-        pygame.display.set_caption(f"Fly-in — {map_file}")
-        self.clock = pygame.time.Clock()
-        self.font = pygame.font.SysFont("monospace", 16)
-        self.font_small = pygame.font.SysFont("monospace", 13)
-        self.font_big = pygame.font.SysFont("monospace", 20, bold=True)
-
-        self.t = 0.0
-        self.speed = 1.5  # turns per second
+        self.current_time = 0.0
         self.playing = True
 
-    # -- drawing -----------------------------------------------------------
-    def draw_connections(self) -> None:
-        drawn: set[tuple[str, str]] = set()
+        arcade.set_background_color((13, 17, 23))
+
+    def on_update(self, delta_time):
+        """Update the simulation time."""
+        if self.playing:
+            self.current_time = min(
+                self.current_time + SPEED * delta_time,
+                self.max_turn,
+            )
+
+    def on_draw(self):
+        """Draw the graph and drones."""
+        self.clear()
+
+        self.draw_connections()
+        self.draw_hubs()
+        self.draw_drones()
+        self.draw_status()
+
+    def draw_connections(self):
+        """Draw connections between neighboring hubs."""
         for name in self.graph._hubs:
-            for neighbor, _ in self.graph.neighbors(name):
-                key = (name, neighbor) if name < neighbor else (neighbor, name)
-                if key in drawn:
-                    continue
-                drawn.add(key)
-                pygame.draw.line(
-                    self.screen, LINE, self.layout[name],
-                    self.layout[neighbor], 3,
-                )
+            for neighbor, _distance in self.graph.neighbors(name):
+                # Prevent each undirected connection from being drawn twice.
+                if name < neighbor:
+                    start_x, start_y = self.layout[name]
+                    end_x, end_y = self.layout[neighbor]
 
-    def draw_hubs(self) -> None:
-        for name, hub in self.graph._hubs.items():
-            pos = self.layout[name]
-            ipos = (int(pos[0]), int(pos[1]))
-            color = hub_zone_color(hub)
-            pygame.draw.circle(self.screen, color, ipos, HUB_RADIUS)
-            pygame.draw.circle(self.screen, TEXT, ipos, HUB_RADIUS, 2)
+                    arcade.draw_line(
+                        start_x,
+                        start_y,
+                        end_x,
+                        end_y,
+                        (48, 54, 61),
+                        2,
+                    )
 
-            label = self.font_big.render(name, True, TEXT)
-            self.screen.blit(
-                label, label.get_rect(center=ipos)
+    def draw_hubs(self):
+        """Draw every hub and its name."""
+        for name, position in self.layout.items():
+            x, y = position
+
+            arcade.draw_circle_filled(
+                x,
+                y,
+                22,
+                (48, 54, 61),
+            )
+            arcade.draw_circle_outline(
+                x,
+                y,
+                22,
+                (230, 237, 243),
+                2,
+            )
+            arcade.draw_text(
+                name,
+                x,
+                y - 36,
+                (230, 237, 243),
+                8,
+                anchor_x="center",
+                anchor_y="center",
             )
 
-            # capacity / zone caption under the hub
-            caption = f"cap {hub.max_drones}"
-            if hub.zone != "normal":
-                caption = f"{hub.zone[:4]} · {caption}"
-            cap = self.font_small.render(caption, True, MUTED)
-            self.screen.blit(
-                cap, cap.get_rect(center=(ipos[0], ipos[1] + HUB_RADIUS + 12))
-            )
-
-    def draw_drones(self) -> None:
+    def draw_drones(self):
+        """Draw every drone at its current position."""
         for drone_id, path in self.routes.items():
-            pos = drone_position(path, self.layout, self.t)
-            if pos is None:
+            if not path:
                 continue
-            color = DRONE_COLORS[(drone_id - 1) % len(DRONE_COLORS)]
-            ipos = (int(pos[0]), int(pos[1]))
 
-            arrived = self.t >= path[-1][1]
-            radius = DRONE_RADIUS + (0 if arrived else 1)
-            pygame.draw.circle(self.screen, color, ipos, radius)
-            pygame.draw.circle(self.screen, BG, ipos, radius, 2)
+            x, y = drone_pos(
+                path,
+                self.layout,
+                self.current_time,
+            )
 
-            tag = self.font_small.render(str(drone_id), True, BG)
-            self.screen.blit(tag, tag.get_rect(center=ipos))
+            arcade.draw_circle_filled(
+                x,
+                y,
+                10,
+                (88, 166, 255),
+            )
+            arcade.draw_text(
+                str(drone_id),
+                x,
+                y,
+                (13, 17, 23),
+                12,
+                anchor_x="center",
+                anchor_y="center",
+            )
 
-    def draw_hud(self) -> None:
-        # top strip: turn + status
-        turn = min(self.t, self.max_turn)
-        arrived = sum(
-            1 for p in self.routes.values() if p and self.t >= p[-1][1]
+    def draw_status(self):
+        """Draw the current simulation turn."""
+        arcade.draw_text(
+            f"Turn {self.current_time:.1f} / {self.max_turn}",
+            MARGIN,
+            HEIGHT - 30,
+            (230, 237, 243),
+            16,
         )
-        status = "PLAYING" if self.playing else "PAUSED"
-        header = (
-            f"turn {turn:5.1f} / {self.max_turn}   "
-            f"speed x{self.speed:.1f}   "
-            f"arrived {arrived}/{len(self.routes)}   [{status}]"
-        )
-        self.screen.blit(self.font.render(header, True, TEXT), (MARGIN, 22))
 
-        # bottom strip: per-drone legend + controls
-        y = HEIGHT - 46
-        x = MARGIN
-        for drone_id, path in self.routes.items():
-            color = DRONE_COLORS[(drone_id - 1) % len(DRONE_COLORS)]
-            pygame.draw.circle(self.screen, color, (x + 6, y + 6), 6)
-            info = f"D{drone_id}: {path[-1][1]}t"
-            surf = self.font_small.render(info, True, MUTED)
-            self.screen.blit(surf, (x + 18, y))
-            x += 22 + surf.get_width() + 16
-            if x > WIDTH - 160:
-                x = MARGIN
-                y += 20
+    def on_key_press(self, key, _modifiers):
+        """Handle keyboard controls."""
+        if key == arcade.key.SPACE:
+            self.playing = not self.playing
 
-        controls = "SPACE play/pause   R restart   UP/DOWN speed   " \
-            "LEFT/RIGHT step   ESC quit"
-        surf = self.font_small.render(controls, True, MUTED)
-        self.screen.blit(surf, (MARGIN, HEIGHT - 22))
+        elif key == arcade.key.R:
+            self.current_time = 0.0
+            self.playing = True
 
-    # -- loop --------------------------------------------------------------
-    def step(self, delta: int) -> None:
-        self.playing = False
-        self.t = max(0.0, min(float(round(self.t) + delta), self.max_turn))
-
-    def run(self) -> None:
-        running = True
-        while running:
-            dt = self.clock.tick(FPS) / 1000.0
-
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                elif event.type == pygame.KEYDOWN:
-                    if event.key in (pygame.K_ESCAPE, pygame.K_q):
-                        running = False
-                    elif event.key == pygame.K_SPACE:
-                        if self.t >= self.max_turn:
-                            self.t = 0.0
-                        self.playing = not self.playing
-                    elif event.key == pygame.K_r:
-                        self.t = 0.0
-                        self.playing = True
-                    elif event.key == pygame.K_UP:
-                        self.speed = min(self.speed + 0.5, 10.0)
-                    elif event.key == pygame.K_DOWN:
-                        self.speed = max(self.speed - 0.5, 0.5)
-                    elif event.key == pygame.K_RIGHT:
-                        self.step(1)
-                    elif event.key == pygame.K_LEFT:
-                        self.step(-1)
-
-            if self.playing:
-                self.t += self.speed * dt
-                if self.t >= self.max_turn:
-                    self.t = self.max_turn
-                    self.playing = False
-
-            self.screen.fill(BG)
-            self.draw_connections()
-            self.draw_hubs()
-            self.draw_drones()
-            self.draw_hud()
-            pygame.display.flip()
-
-        pygame.quit()
+        elif key in (arcade.key.ESCAPE, arcade.key.Q):
+            self.close()
 
 
-def main() -> None:
-    map_file = sys.argv[1] if len(sys.argv) > 1 else "./map.txt"
-    try:
-        Visualizer(map_file).run()
-    except FileNotFoundError as e:
-        print(f"[ERROR]: File not found — {e.filename}")
-        sys.exit(1)
-    except ConfigSyntaxError as e:
-        print(f"[ERROR]: {e}")
-        sys.exit(1)
+def main():
+    """Load the map and start the visualizer."""
+    if len(sys.argv) > 1:
+        map_file = sys.argv[1]
+    else:
+        map_file = "./map.txt"
+
+    Visualizer(map_file)
+    arcade.run()
 
 
 if __name__ == "__main__":
