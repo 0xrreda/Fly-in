@@ -22,6 +22,7 @@ class Simulation(arcade.Window):
             self.map_config.hubs
         )
         self.simulation_time: float = 0.0
+        self.playing: bool = True
 
         self.routes: dict[int, list[State]] = routes
         self.total_turns: int = max(
@@ -29,15 +30,23 @@ class Simulation(arcade.Window):
         )
 
     def on_update(self, delta_time: float) -> None:
-        self.simulation_time += Simulation.SPEED * delta_time
+        if self.playing:
+            self.simulation_time += Simulation.SPEED * delta_time
 
     def on_draw(self) -> None:
         self.clear()
         self.draw_connections()
         self.draw_hubs()
         self.draw_drones()
+        self.draw_counter()
 
     def on_key_press(self, symbol: int, modifiers: int) -> None:
+        if symbol == arcade.key.R:
+            self.simulation_time = 0.0
+
+        if symbol == arcade.key.SPACE:
+            self.playing = not self.playing
+
         if symbol in (arcade.key.ESCAPE, arcade.key.Q):
             self.close()
 
@@ -66,7 +75,7 @@ class Simulation(arcade.Window):
                 anchor_x="center",
             )
 
-    def draw_drones(self):
+    def draw_drones(self) -> None:
         for drone_id, path in self.routes.items():
             x, y = self.drone_position(path)
 
@@ -85,6 +94,18 @@ class Simulation(arcade.Window):
                 anchor_x="center",
                 anchor_y="center",
             )
+
+    def draw_counter(self) -> None:
+        turn = min(int(self.simulation_time), self.total_turns)
+        arcade.draw_text(
+            f"Turn {turn} / {self.total_turns}",
+            Simulation.WIDTH - Simulation.MARGIN * 2,
+            Simulation.HEIGHT - Simulation.MARGIN,
+            (186, 194, 222),
+            16,
+            bold=True,
+            anchor_x="center",
+        )
 
     def drone_position(self, path: list[State]) -> tuple[float, float]:
         if self.simulation_time <= path[0][1]:
@@ -149,6 +170,6 @@ class Simulation(arcade.Window):
         out_max: float,
     ) -> float:
         if in_min == in_max:
-            return (out_max - out_min) / 2
+            return (out_max + out_min) / 2
         frac = (value - in_min) / (in_max - in_min)
         return out_min + frac * (out_max - out_min)
