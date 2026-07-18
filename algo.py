@@ -54,7 +54,6 @@ class Algo:
         came_from: dict[State, State | None] = {(start, 0): None}
 
         while not priority_queue.empty():
-            print(priority_queue.queue)
             turn, cost, hub = priority_queue.get()
 
             if hub == end:
@@ -138,5 +137,4 @@ class Algo:
         while curr:
             route.append(curr)
             curr = came_from[curr]
-
         return route[::-1]

@@ -1,11 +1,16 @@
+import arcade
+
 from algo import Algo
 from config_parser import ConfigParser, ConfigSyntaxError
 from graph import Graph
+from simulation import Simulation
 
 
 if __name__ == "__main__":
     try:
-        config = ConfigParser().parse("./map.txt")
+        map_config = ConfigParser().parse(
+            "./maps/challenger/01_the_impossible_dream.txt"
+        )
     except FileNotFoundError as e:
         print(f"[ERROR]: File not found — {e.filename}")
         exit(1)
@@ -16,8 +21,13 @@ if __name__ == "__main__":
         print(f"[ERROR]: {e}")
         exit(1)
 
-    graph = Graph(config)
-    routes = Algo(graph).generate_routes(config.nb_drones)
+    graph = Graph(map_config)
 
-    for drone_id, route in routes.items():
-        print(f"{drone_id}: {route}\n")
+    try:
+        routes = Algo(graph).generate_routes(map_config.nb_drones)
+    except ValueError as e:
+        print(f"[ERROR]: {e}")
+        exit(1)
+
+    _ = Simulation(map_config, routes)
+    arcade.run()
