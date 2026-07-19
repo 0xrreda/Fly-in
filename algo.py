@@ -1,4 +1,5 @@
 from queue import PriorityQueue
+
 from graph import Graph
 from models import Connection
 
