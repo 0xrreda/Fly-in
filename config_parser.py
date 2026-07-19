@@ -216,7 +216,7 @@ class ConfigParser:
                             x=int(x),
                             y=int(y),
                             type=keyword,
-                            color=meta_attrs.get("color", "none"),
+                            color=meta_attrs.get("color"),
                             zone=meta_attrs.get("zone", "normal"),
                             max_drones=int(meta_attrs.get("max_drones", 1)),
                         )

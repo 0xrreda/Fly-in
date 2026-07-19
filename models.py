@@ -7,7 +7,7 @@ class Hub:
     x: int
     y: int
     type: str
-    color: str = "none"
+    color: str | None = None
     max_drones: int = 1
     zone: str = "normal"
 

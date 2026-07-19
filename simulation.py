@@ -1,4 +1,5 @@
 import arcade
+import webcolors
 
 from algo import State
 from models import Hub, MapConfig
@@ -14,7 +15,7 @@ class Simulation(arcade.Window):
         self, map_config: MapConfig, routes: dict[int, list[State]]
     ) -> None:
         super().__init__(Simulation.WIDTH, Simulation.HEIGHT, "Fly-in")
-        self.background_color = 30, 30, 46
+        self.background_color = (36, 39, 58)
 
         self.map_config: MapConfig = map_config
 
@@ -55,7 +56,7 @@ class Simulation(arcade.Window):
             arcade.draw_line(
                 *self.layout[conn.source],
                 *self.layout[conn.target],
-                (205, 214, 244),
+                (244, 219, 214),
                 2,
             )
 
@@ -63,13 +64,19 @@ class Simulation(arcade.Window):
         for idx, (name, (x, y)) in enumerate(self.layout.items()):
             add_by = -40 if idx % 2 == 0 else 40
 
-            arcade.draw_circle_filled(x, y, 24, (137, 180, 250))
-            arcade.draw_circle_outline(x, y, 24, (205, 214, 244), 2)
+            hub_color = (145, 215, 227)
+            if self.map_config.hubs[name].color in webcolors.names():
+                hub_color = webcolors.name_to_rgb(
+                    str(self.map_config.hubs[name].color)
+                )
+
+            arcade.draw_circle_filled(x, y, 24, hub_color)
+            arcade.draw_circle_outline(x, y, 24, (244, 219, 214), 2)
             arcade.draw_text(
                 name,
                 x,
                 y + add_by,
-                (186, 194, 222),
+                (202, 211, 245),
                 10,
                 bold=True,
                 anchor_x="center",
@@ -83,13 +90,13 @@ class Simulation(arcade.Window):
                 x,
                 y,
                 12,
-                (250, 179, 135),
+                (24, 25, 38),
             )
             arcade.draw_text(
                 str(drone_id),
                 x,
                 y,
-                (49, 50, 68),
+                (202, 211, 245),
                 8,
                 anchor_x="center",
                 anchor_y="center",
@@ -101,7 +108,7 @@ class Simulation(arcade.Window):
             f"Turn {turn} / {self.total_turns}",
             Simulation.WIDTH - Simulation.MARGIN * 2,
             Simulation.HEIGHT - Simulation.MARGIN,
-            (186, 194, 222),
+            (202, 211, 245),
             16,
             bold=True,
             anchor_x="center",
