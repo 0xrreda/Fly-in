@@ -51,6 +51,9 @@ class ConfigParser:
         {"normal", "blocked", "restricted", "priority"}
     )
 
+    def __init__(self) -> None:
+        self.used_connections: set[tuple[str, str]] = set()
+
     @staticmethod
     def _loads_file(path: str) -> list[str]:
         with open(path) as config_file:
@@ -59,6 +62,8 @@ class ConfigParser:
     @staticmethod
     def _parse_meta_attrs(keyword: str, meta_attrs: str) -> dict[str, Any]:
         attrs: dict[str, Any] = {}
+        used_attrs: set[str] = set()
+
         for pair in meta_attrs.split():
             key, _, val = pair.partition("=")
             if not key or not val:
@@ -82,6 +87,13 @@ class ConfigParser:
                     "Invalid value in metadata",
                     f"Expected a valid string or number, got '{val}'",
                 )
+            if key in used_attrs:
+                raise ValueError(
+                    "Duplicate metadata key",
+                    f"Key '{key}' appears more than once.",
+                )
+            else:
+                used_attrs.add(key)
             attrs[key] = val
 
         return attrs
@@ -101,13 +113,12 @@ class ConfigParser:
                 + "\t\tconnection: 'connection: <name1>-<name2> [metadata]'"
                 + " (metadata is optional in both)",
             )
-        return attrs, self._parse_meta_attrs(
-            keyword, meta_attrs.lstrip("[").rstrip("]")
-        )
+        return attrs, self._parse_meta_attrs(keyword, meta_attrs[:-1])
 
     def parse(self, path: str = "maps/easy/01_linear_path.txt") -> MapConfig:
         config = MapConfig()
         used_hubs: set[str] = set()
+        used_coordinates: set[tuple[int, int]] = set()
 
         for lineno, raw in enumerate(self._loads_file(path), start=1):
             if raw.startswith("#"):
@@ -158,6 +169,27 @@ class ConfigParser:
                             )
 
                         name1, name2 = connection_name.split("-")
+                        if name1 not in config.hubs:
+                            raise ValueError(
+                                f"Unknown hub '{name1}' in connection",
+                                "Connections can only link previously defined"
+                                + " hubs define the hub before referencing it",
+                            )
+                        if name2 not in config.hubs:
+                            raise ValueError(
+                                f"Unknown hub '{name2}' in connection",
+                                "Connections can only link previously defined"
+                                + " hubs define the hub before referencing it",
+                            )
+
+                        if self.used_connection(name1, name2):
+                            raise ValueError(
+                                "Duplicate connection",
+                                f"'{name1}-{name2}' is already defined "
+                                + "(direction doesn't matter: 'a-b' and 'b-a'"
+                                + " are the same link)",
+                            )
+
                         config.connections.append(
                             Connection(
                                 source=name1,
@@ -211,10 +243,21 @@ class ConfigParser:
                                 )
                                 + f", got '{meta_attrs['zone']}'",
                             )
+
+                        coor = (int(x), int(y))
+                        if coor in used_coordinates:
+                            raise ValueError(
+                                "Duplicate coordinates",
+                                f"Zone '{name}' reuses coordinates {coor} "
+                                + "already assigned to another zone",
+                            )
+                        else:
+                            used_coordinates.add(coor)
+
                         hub = Hub(
                             name=name,
-                            x=int(x),
-                            y=int(y),
+                            x=coor[0],
+                            y=coor[1],
                             type=keyword,
                             color=meta_attrs.get("color"),
                             zone=meta_attrs.get("zone", "normal"),
@@ -239,4 +282,18 @@ class ConfigParser:
                     e.args[1] if len(e.args) > 1 else None,
                 )
 
+        missing = {"start_hub", "end_hub"} - {
+            hub.type for hub in config.hubs.values()
+        }
+        if missing:
+            raise ValueError(f"Missing {', '.join(missing)}")
+
+        self.used_connections = set()
         return config
+
+    def used_connection(self, source: str, target: str) -> bool:
+        conn = (source, target) if source < target else (target, source)
+        if conn in self.used_connections:
+            return True
+        self.used_connections.add(conn)
+        return False

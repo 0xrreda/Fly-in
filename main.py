@@ -27,8 +27,15 @@ if __name__ == "__main__":
     except ConfigSyntaxError as e:
         print(f"[ERROR]: {e}")
         exit(1)
+    except Exception as e:
+        print(f"[ERROR]: {e}")
+        exit(1)
 
-    graph = Graph(map_config)
+    try:
+        graph = Graph(map_config)
+    except Exception as e:
+        print(f"[ERROR]: {e}")
+        exit(1)
 
     try:
         routes = Algo(graph).generate_routes(map_config.nb_drones)
@@ -41,3 +48,6 @@ if __name__ == "__main__":
         arcade.run()
     except (KeyboardInterrupt, EOFError):
         pass
+    except Exception as e:
+        print(f"[ERROR]: {e}")
+        exit(1)
