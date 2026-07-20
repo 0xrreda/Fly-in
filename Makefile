@@ -7,10 +7,10 @@ install:
 	uv sync
 
 run:
-	clear && $(RUN) $(NAME) $(FILE)
+	$(RUN) $(NAME) $(FILE)
 
 debug:
-	$(RUN) -m pdb $(NAME)
+	$(RUN) -m pdb $(NAME) $(FILE)
 
 clean:
 	rm -rf __pycache__ */__pycache__ */*/__pycache__ .mypy_cache dist .ruff_cache

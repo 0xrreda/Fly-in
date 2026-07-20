@@ -1,8 +1,13 @@
+import warnings
+
 import arcade
 import webcolors
+from arcade.exceptions import PerformanceWarning
 
 from algo import State
 from models import Hub, MapConfig
+
+warnings.filterwarnings("ignore", category=PerformanceWarning)
 
 
 class Simulation(arcade.Window):
@@ -53,10 +58,19 @@ class Simulation(arcade.Window):
 
     def draw_connections(self) -> None:
         for conn in self.map_config.connections:
+            conn_color = (
+                (239, 159, 118)
+                if "restricted"
+                in (
+                    self.map_config.hubs[conn.source].zone,
+                    self.map_config.hubs[conn.target].zone,
+                )
+                else (244, 219, 214)
+            )
             arcade.draw_line(
                 *self.layout[conn.source],
                 *self.layout[conn.target],
-                (244, 219, 214),
+                conn_color,
                 2,
             )
 
@@ -106,36 +120,26 @@ class Simulation(arcade.Window):
         turn = min(int(self.simulation_time), self.total_turns)
         arcade.draw_text(
             f"Turn {turn} / {self.total_turns}",
-            Simulation.WIDTH - Simulation.MARGIN * 2,
+            Simulation.MARGIN,
             Simulation.HEIGHT - Simulation.MARGIN,
             (202, 211, 245),
             16,
             bold=True,
-            anchor_x="center",
         )
 
     def drone_position(self, path: list[State]) -> tuple[float, float]:
-        if self.simulation_time <= path[0][1]:
-            first_hub = path[0][0]
-            return self.layout[first_hub]
-
         if self.simulation_time >= path[-1][1]:
-            last_hub = path[-1][0]
-            return self.layout[last_hub]
+            return self.layout[path[-1][0]]
 
-        for (start_hub, start_turn), (end_hub, end_turn) in zip(
-            path, path[1:]
-        ):
-            if start_turn <= self.simulation_time <= end_turn:
-                x_a, y_a = self.layout[start_hub]
-                x_b, y_b = self.layout[end_hub]
-                x = Simulation.remap(
-                    self.simulation_time, start_turn, end_turn, x_a, x_b
+        for (prev_hub, prev_turn), (hub, turn) in zip(path, path[1:]):
+            if prev_turn <= self.simulation_time <= turn:
+                xa, ya = self.layout[prev_hub]
+                xb, yb = self.layout[hub]
+
+                return (
+                    self.remap(self.simulation_time, prev_turn, turn, xa, xb),
+                    self.remap(self.simulation_time, prev_turn, turn, ya, yb),
                 )
-                y = Simulation.remap(
-                    self.simulation_time, start_turn, end_turn, y_a, y_b
-                )
-                return (x, y)
 
         return self.layout[path[0][0]]
 
