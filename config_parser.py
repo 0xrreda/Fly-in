@@ -190,13 +190,20 @@ class ConfigParser:
                                 + " are the same link)",
                             )
 
+                        max_link_capacity = int(
+                            meta_attrs.get("max_link_capacity", 1)
+                        )
+                        if max_link_capacity <= 0:
+                            raise ValueError(
+                                "Invalid capacity value",
+                                "'max_link_capacity' must be a positive"
+                                + f" integer, got '{max_link_capacity}'",
+                            )
                         config.connections.append(
                             Connection(
                                 source=name1,
                                 target=name2,
-                                max_link_capacity=int(
-                                    meta_attrs.get("max_link_capacity", 1)
-                                ),
+                                max_link_capacity=max_link_capacity,
                             )
                         )
                     else:
@@ -254,6 +261,14 @@ class ConfigParser:
                         else:
                             used_coordinates.add(coor)
 
+                        max_drones = int(meta_attrs.get("max_drones", 1))
+                        if keyword == "hub" and max_drones <= 0:
+                            raise ValueError(
+                                "Invalid capacity value",
+                                "'max_drones' must be a positive integer"
+                                + f", got '{max_drones}'",
+                            )
+
                         hub = Hub(
                             name=name,
                             x=coor[0],
@@ -261,7 +276,7 @@ class ConfigParser:
                             type=keyword,
                             color=meta_attrs.get("color"),
                             zone=meta_attrs.get("zone", "normal"),
-                            max_drones=int(meta_attrs.get("max_drones", 1)),
+                            max_drones=max_drones,
                         )
                         config.hubs[hub.name] = hub
 

@@ -16,10 +16,11 @@ class Algo:
 
     def generate_routes(self, nb_drones: int) -> dict[int, list[State]]:
         self.time_horizon = self.graph.hub_count * 2 * nb_drones
+        start, end = self.graph.get_route_endpoints()
 
         routes: dict[int, list[State]] = {}
         for drone_idx in range(1, nb_drones + 1):
-            route = self._dijkstra(*self.graph.get_route_endpoints())
+            route = self._dijkstra(start, end)
             if not route:
                 raise ValueError(f"No path found for drone {drone_idx}!")
 
