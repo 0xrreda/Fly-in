@@ -24,7 +24,7 @@ class Simulation(arcade.Window):
 
         self.map_config: MapConfig = map_config
 
-        self.layout: dict[str, tuple[float, float]] = self.build_layout(
+        self.layout: dict[str, tuple[float, float]] = self._build_layout(
             self.map_config.hubs
         )
         self.simulation_time: float = 0.0
@@ -35,7 +35,7 @@ class Simulation(arcade.Window):
             path[-1][1] for path in self.routes.values()
         )
 
-        self.output()
+        self.simulation_output()
 
     def on_update(self, delta_time: float) -> None:
         if self.playing:
@@ -43,10 +43,10 @@ class Simulation(arcade.Window):
 
     def on_draw(self) -> None:
         self.clear()
-        self.draw_connections()
-        self.draw_hubs()
-        self.draw_drones()
-        self.draw_counter()
+        self._draw_connections()
+        self._draw_hubs()
+        self._draw_drones()
+        self._draw_counter()
 
     def on_key_press(self, symbol: int, modifiers: int) -> None:
         if symbol == arcade.key.R:
@@ -58,7 +58,7 @@ class Simulation(arcade.Window):
         if symbol in (arcade.key.ESCAPE, arcade.key.Q):
             self.close()
 
-    def draw_connections(self) -> None:
+    def _draw_connections(self) -> None:
         for conn in self.map_config.connections:
             arcade.draw_line(
                 *self.layout[conn.source],
@@ -67,7 +67,7 @@ class Simulation(arcade.Window):
                 2,
             )
 
-    def draw_hubs(self) -> None:
+    def _draw_hubs(self) -> None:
         for idx, (name, (x, y)) in enumerate(self.layout.items()):
             add_by = -40 if idx % 2 == 0 else 40
 
@@ -89,9 +89,9 @@ class Simulation(arcade.Window):
                 anchor_x="center",
             )
 
-    def draw_drones(self) -> None:
+    def _draw_drones(self) -> None:
         for drone_id, path in self.routes.items():
-            x, y = self.drone_position(path)
+            x, y = self._drone_position(path)
 
             arcade.draw_circle_filled(
                 x,
@@ -109,7 +109,7 @@ class Simulation(arcade.Window):
                 anchor_y="center",
             )
 
-    def draw_counter(self) -> None:
+    def _draw_counter(self) -> None:
         turn = min(int(self.simulation_time), self.total_turns)
         arcade.draw_text(
             f"Turn {turn} / {self.total_turns}",
@@ -120,7 +120,7 @@ class Simulation(arcade.Window):
             bold=True,
         )
 
-    def drone_position(self, path: list[State]) -> tuple[float, float]:
+    def _drone_position(self, path: list[State]) -> tuple[float, float]:
         if self.simulation_time >= path[-1][1]:
             return self.layout[path[-1][0]]
 
@@ -130,14 +130,14 @@ class Simulation(arcade.Window):
                 xb, yb = self.layout[hub]
 
                 return (
-                    self.remap(self.simulation_time, prev_turn, turn, xa, xb),
-                    self.remap(self.simulation_time, prev_turn, turn, ya, yb),
+                    self._remap(self.simulation_time, prev_turn, turn, xa, xb),
+                    self._remap(self.simulation_time, prev_turn, turn, ya, yb),
                 )
 
         return self.layout[path[0][0]]
 
     @staticmethod
-    def build_layout(
+    def _build_layout(
         hubs: dict[str, Hub],
     ) -> dict[str, tuple[float, float]]:
         xs = [hub.x for hub in hubs.values()]
@@ -148,14 +148,14 @@ class Simulation(arcade.Window):
         layout: dict[str, tuple[float, float]] = {}
         for name, hub in hubs.items():
             layout[name] = (
-                Simulation.remap(
+                Simulation._remap(
                     hub.x,
                     min_x,
                     max_x,
                     Simulation.MARGIN,
                     Simulation.WIDTH - Simulation.MARGIN,
                 ),
-                Simulation.remap(
+                Simulation._remap(
                     hub.y,
                     min_y,
                     max_y,
@@ -166,7 +166,7 @@ class Simulation(arcade.Window):
         return layout
 
     @staticmethod
-    def remap(
+    def _remap(
         value: float,
         in_min: float,
         in_max: float,
@@ -178,41 +178,19 @@ class Simulation(arcade.Window):
         frac = (value - in_min) / (in_max - in_min)
         return out_min + frac * (out_max - out_min)
 
-    def output(self) -> None:
-        for turn in range(self.total_turns + 1):
-            print(f"{turn}: ", end="")
-            for drone_id, route in self.routes.items():
-                if turn > route[-1][1]:
+    def simulation_output(self) -> None:
+        moves_by_turn: dict[int, list[str]] = {}
+
+        for drone_id, route in self.routes.items():
+            for (prev_hub, prev_turn), (hub, turn) in zip(route, route[1:]):
+                if prev_hub == hub:
                     continue
 
-                valid_drone_turns = [turn for _, turn in route]
-                if turn in valid_drone_turns:
-                    curr_state = next(
-                        state for state in route if state[1] == turn
+                if turn - prev_turn == 2:
+                    moves_by_turn.setdefault(turn - 1, []).append(
+                        f"D{drone_id}-{prev_hub}-{hub}"
                     )
+                moves_by_turn.setdefault(turn, []).append(f"D{drone_id}-{hub}")
 
-                    if self.map_config.hubs[curr_state[0]].type == "start_hub":
-                        continue
-
-                    prev_state = (None, -1)
-                    if turn - 1 in valid_drone_turns:
-                        prev_state = next(
-                            state for state in route if state[1] == turn - 1
-                        )
-
-                    if curr_state[0] != prev_state[0]:
-                        print(f"D{drone_id}-{curr_state[0]}", end=" ")
-
-                else:
-                    prev_state = next(
-                        state for state in route if state[1] == turn - 1
-                    )
-                    next_state = next(
-                        state for state in route if state[1] == turn + 1
-                    )
-
-                    print(
-                        f"D{drone_id}-{prev_state[0]}-{next_state[0]}", end=" "
-                    )
-
-            print()
+        for turn in range(1, self.total_turns + 1):
+            print(" ".join(moves_by_turn.get(turn, [])))
