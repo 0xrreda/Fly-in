@@ -35,6 +35,8 @@ class Simulation(arcade.Window):
             path[-1][1] for path in self.routes.values()
         )
 
+        self.output()
+
     def on_update(self, delta_time: float) -> None:
         if self.playing:
             self.simulation_time += Simulation.SPEED * delta_time
@@ -58,19 +60,10 @@ class Simulation(arcade.Window):
 
     def draw_connections(self) -> None:
         for conn in self.map_config.connections:
-            conn_color = (
-                (239, 159, 118)
-                if "restricted"
-                in (
-                    self.map_config.hubs[conn.source].zone,
-                    self.map_config.hubs[conn.target].zone,
-                )
-                else (244, 219, 214)
-            )
             arcade.draw_line(
                 *self.layout[conn.source],
                 *self.layout[conn.target],
-                conn_color,
+                (244, 219, 214),
                 2,
             )
 
@@ -184,3 +177,42 @@ class Simulation(arcade.Window):
             return (out_max + out_min) / 2
         frac = (value - in_min) / (in_max - in_min)
         return out_min + frac * (out_max - out_min)
+
+    def output(self) -> None:
+        for turn in range(self.total_turns + 1):
+            print(f"{turn}: ", end="")
+            for drone_id, route in self.routes.items():
+                if turn > route[-1][1]:
+                    continue
+
+                valid_drone_turns = [turn for _, turn in route]
+                if turn in valid_drone_turns:
+                    curr_state = next(
+                        state for state in route if state[1] == turn
+                    )
+
+                    if self.map_config.hubs[curr_state[0]].type == "start_hub":
+                        continue
+
+                    prev_state = (None, -1)
+                    if turn - 1 in valid_drone_turns:
+                        prev_state = next(
+                            state for state in route if state[1] == turn - 1
+                        )
+
+                    if curr_state[0] != prev_state[0]:
+                        print(f"D{drone_id}-{curr_state[0]}", end=" ")
+
+                else:
+                    prev_state = next(
+                        state for state in route if state[1] == turn - 1
+                    )
+                    next_state = next(
+                        state for state in route if state[1] == turn + 1
+                    )
+
+                    print(
+                        f"D{drone_id}-{prev_state[0]}-{next_state[0]}", end=" "
+                    )
+
+            print()
