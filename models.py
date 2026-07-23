@@ -3,18 +3,18 @@ from dataclasses import dataclass, field
 
 @dataclass
 class Hub:
-    """A single zone of the drone network.
+    """One zone of the drone network, as parsed from a map file.
 
     Attributes:
         name: Unique zone identifier.
-        x: Integer x coordinate, used to lay the zone out on screen.
-        y: Integer y coordinate, used to lay the zone out on screen.
-        type: Role of the zone: 'start_hub', 'end_hub' or 'hub'.
-        color: Optional color name used by the visualization.
-        max_drones: How many drones may occupy the zone at once. It is
-            ignored on the start and end hubs, which are unlimited.
-        zone: Movement type of the zone: 'normal', 'blocked',
-            'restricted' or 'priority'.
+        x: Map x coordinate (not a screen pixel — Simulation remaps it).
+        y: Map y coordinate.
+        type: 'start_hub', 'end_hub' or plain 'hub'.
+        color: Optional color name, purely for the visualization.
+        max_drones: Simultaneous occupancy limit. start_hub/end_hub
+            ignore this — they're always unlimited.
+        zone: Movement behaviour: 'normal', 'blocked', 'restricted' or
+            'priority'. Drives both pathfinding cost and duration.
     """
 
     name: str
@@ -28,13 +28,12 @@ class Hub:
 
 @dataclass
 class Connection:
-    """A bidirectional link between two zones.
+    """A link between two zones — bidirectional despite the naming.
 
     Attributes:
-        source: Name of the first linked zone.
-        target: Name of the second linked zone.
-        max_link_capacity: How many drones may traverse the link at the
-            same turn.
+        source: One endpoint's zone name.
+        target: The other endpoint's zone name.
+        max_link_capacity: Drones allowed to cross it in the same turn.
     """
 
     source: str
@@ -44,12 +43,12 @@ class Connection:
 
 @dataclass
 class MapConfig:
-    """The full content of a parsed map file.
+    """Everything ConfigParser extracts from one map file.
 
     Attributes:
-        nb_drones: Number of drones to route from start to end.
-        hubs: Every zone of the map, keyed by zone name.
-        connections: Every link declared between two zones.
+        nb_drones: How many drones need routing, start to end.
+        hubs: Every zone, keyed by name for O(1) lookup.
+        connections: Every declared link, in file order.
     """
 
     nb_drones: int = 0

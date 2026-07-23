@@ -56,16 +56,17 @@ class Simulation(arcade.Window):
         self.simulation_output()
 
     def on_update(self, delta_time: float) -> None:
-        """Advance the simulation clock while playback is running.
+        """Tick the simulation clock forward, unless paused.
 
         Args:
-            delta_time: Seconds elapsed since the previous frame.
+            delta_time: Real seconds since the last frame — arcade
+                measures this, it isn't a fixed 1/60.
         """
         if self.playing:
             self.simulation_time += Simulation.SPEED * delta_time
 
     def on_draw(self) -> None:
-        """Redraw the network, the drones and the turn counter."""
+        """Redraw the frame: network, drones, then the turn counter."""
         self.clear()
         self._draw_connections()
         self._draw_hubs()
@@ -73,14 +74,15 @@ class Simulation(arcade.Window):
         self._draw_counter()
 
     def on_key_press(self, symbol: int, modifiers: int) -> None:
-        """Handle the playback keys.
+        """Route the playback shortcuts.
 
-        R restarts the replay, space pauses or resumes it, and Q or
-        escape closes the window.
+        R rewinds to turn zero, SPACE toggles play/pause, and Q or
+        ESCAPE quits.
 
         Args:
-            symbol: Key that was pressed.
-            modifiers: Modifier keys held down, unused here.
+            symbol: Key that triggered the event.
+            modifiers: Held modifier keys — unused, arcade requires the
+                parameter regardless.
         """
         if symbol == arcade.key.R:
             self.simulation_time = 0.0
@@ -92,7 +94,7 @@ class Simulation(arcade.Window):
             self.close()
 
     def _draw_connections(self) -> None:
-        """Draw a line for every link of the network."""
+        """Draw one line per link in the network."""
         for conn in self.map_config.connections:
             arcade.draw_line(
                 *self.layout[conn.source],
@@ -104,9 +106,10 @@ class Simulation(arcade.Window):
     def _draw_hubs(self) -> None:
         """Draw every zone as a labelled circle.
 
-        A zone declaring a known color name is filled with it, so the
-        map metadata is visible on screen. Labels alternate above and
-        below the circles to limit overlapping.
+        A zone with a recognized color name gets filled with it, so the
+        map's own metadata shows up on screen instead of a flat
+        placeholder. Labels alternate above/below each circle so
+        neighbouring labels don't stack on top of each other.
         """
         for idx, (name, (x, y)) in enumerate(self.layout.items()):
             add_by = -40 if idx % 2 == 0 else 40
@@ -130,7 +133,7 @@ class Simulation(arcade.Window):
             )
 
     def _draw_drones(self) -> None:
-        """Draw every drone, numbered, at its current position."""
+        """Draw each drone as a numbered dot at its current position."""
         for drone_id, path in self.routes.items():
             x, y = self._drone_position(path)
 
@@ -151,7 +154,7 @@ class Simulation(arcade.Window):
             )
 
     def _draw_counter(self) -> None:
-        """Draw the current turn against the total number of turns."""
+        """Draw 'Turn X / N' in the corner, clamped once playback ends."""
         turn = min(int(self.simulation_time), self.total_turns)
         arcade.draw_text(
             f"Turn {turn} / {self.total_turns}",

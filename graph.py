@@ -4,7 +4,6 @@ from models import Connection, Hub, MapConfig
 class Graph:
     """Undirected graph of zones backed by an adjacency list.
 
-    The structure is built by hand, without any external graph library.
     For every zone it stores the neighbouring zones together with the
     connection used to reach them, so the pathfinder can check link
     capacity while it explores.
@@ -44,13 +43,13 @@ class Graph:
             self._adj[conn.target].append((conn.source, conn))
 
     def get_hub(self, name: str) -> Hub:
-        """Return the zone registered under a given name.
+        """Look up a zone by its name.
 
         Args:
-            name: Name of the zone to look up.
+            name: Zone name to look up.
 
         Returns:
-            The matching Hub.
+            The Hub registered under that name.
 
         Raises:
             KeyError: If no zone uses that name.
@@ -58,13 +57,13 @@ class Graph:
         return self._hubs[name]
 
     def get_route_endpoints(self) -> tuple[str, str]:
-        """Return the names of the start and end zones.
+        """Find the zones marked as start_hub and end_hub.
 
         Returns:
-            A tuple with the start zone name and the end zone name.
+            (start zone name, end zone name).
 
         Raises:
-            StopIteration: If the map has no start or no end zone.
+            StopIteration: If either one is missing from the map.
         """
         start_hub = next(
             hub for hub in self._hubs.values() if hub.type == "start_hub"
@@ -75,39 +74,84 @@ class Graph:
         return start_hub.name, end_hub.name
 
     def neighbors(self, hub: str) -> list[tuple[str, Connection]]:
-        """Return the zones directly reachable from a given zone.
+        """List the zones one hop away from a given zone.
 
         Args:
-            hub: Name of the zone whose neighbours are wanted.
+            hub: Name of the zone to look around.
 
         Returns:
-            A list of (neighbour name, connection used) pairs, empty if
-            the zone is unknown or isolated.
+            (neighbour name, connection) pairs. Empty for an unknown or
+            isolated zone — there's no neighbour to report either way.
         """
         return self._adj.get(hub, [])
 
     def move_cost(self, target: str) -> float:
-        """Return the pathfinding weight of entering a zone.
-
-        This is the cost used to rank paths, not the number of turns the
-        move takes.
+        """Give the Dijkstra weight for stepping into a zone.
 
         Args:
-            target: Name of the destination zone.
+            target: Name of the zone being entered.
 
         Returns:
-            The weight of the destination zone type.
+            ZONE_COSTS[zone type] for that zone.
         """
         hub = self._hubs[target]
         return Graph.ZONE_COSTS[hub.zone]
 
     def is_blocked(self, name: str) -> bool:
-        """Tell whether a zone may never be entered.
+        """Check whether a zone is off-limits entirely.
 
         Args:
-            name: Name of the zone to test.
+            name: Zone to test.
 
         Returns:
-            True if the zone type is 'blocked'.
+            True when the zone's type is 'blocked'.
         """
         return self._hubs[name].zone == "blocked"
+
+    def unreachable_hubs(self) -> set[str]:
+        """Find zones that have no path back to the start zone at all.
+
+        Returns:
+           Every zone name that start can't reach.
+        """
+        hubs_names: set[str] = set(self._hubs)
+        start, _ = self.get_route_endpoints()
+
+        visited: set[str] = set()
+        stack: list[str] = [start]
+        while stack:
+            hub = stack.pop()
+            if hub in visited:
+                continue
+            visited.add(hub)
+
+            for neighbor, _ in self.neighbors(hub):
+                if neighbor not in visited:
+                    stack.append(neighbor)
+
+        return hubs_names - visited
+
+    def is_end_reachable(self) -> bool:
+        """Check that a blocked-avoiding path from start to end exists.
+
+        Returns:
+            True if such a path exists.
+        """
+        start, end = self.get_route_endpoints()
+
+        visited: set[str] = set()
+        stack: list[str] = [start]
+        while stack:
+            hub = stack.pop()
+            if hub == end:
+                return True
+
+            if hub in visited:
+                continue
+            visited.add(hub)
+
+            for neighbor, _ in self.neighbors(hub):
+                if neighbor not in visited and not self.is_blocked(neighbor):
+                    stack.append(neighbor)
+
+        return False

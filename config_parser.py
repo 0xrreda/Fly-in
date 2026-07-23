@@ -43,7 +43,7 @@ class ConfigSyntaxError(Exception):
         super().__init__(message)
 
     def __str__(self) -> str:
-        """Render the error with the guilty line and an optional hint.
+        """Render the error.
 
         Returns:
             A multi line message showing the file, the line number and
@@ -97,16 +97,16 @@ class ConfigParser:
 
     @staticmethod
     def _loads_file(path: str) -> list[str]:
-        """Read every line of a map file.
+        """Read a map file into a list of raw lines.
 
         Args:
-            path: Path of the map file to read.
+            path: Path to the file.
 
         Returns:
-            The lines of the file, newline characters included.
+            Its lines, newlines included — parse() strips those later.
 
         Raises:
-            OSError: If the file cannot be opened or read.
+            OSError: If the file can't be opened or read.
         """
         with open(path) as config_file:
             return config_file.readlines()
@@ -362,7 +362,7 @@ class ConfigParser:
                             used_coordinates.add(coor)
 
                         max_drones = int(meta_attrs.get("max_drones", 1))
-                        if keyword == "hub" and max_drones <= 0:
+                        if "hub" in keyword and max_drones <= 0:
                             raise ValueError(
                                 "Invalid capacity value",
                                 "'max_drones' must be a positive integer"
@@ -407,18 +407,20 @@ class ConfigParser:
         return config
 
     def used_connection(self, source: str, target: str) -> bool:
-        """Tell whether a link was already declared, and record it.
+        """Check for a duplicate link, and remember this one either way.
 
-        Links are bidirectional, so 'a-b' and 'b-a' count as the same
-        connection and the names are sorted before being stored.
+        'a-b' and 'b-a' are the same connection, so the pair is sorted
+        before it's looked up or stored — this is the same normalizing
+        trick Algo._connection_key uses for occupancy tracking.
 
         Args:
-            source: Name of one end of the link.
-            target: Name of the other end of the link.
+            source: One endpoint's zone name.
+            target: The other endpoint's zone name.
 
         Returns:
-            True if the link had already been seen, False otherwise. In
-            the second case the link is remembered for later calls.
+            True if this link was already declared earlier in the
+            file. False the first time — and that first time, it gets
+            recorded for the check to catch a later duplicate.
         """
         conn = (source, target) if source < target else (target, source)
         if conn in self.used_connections:

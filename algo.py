@@ -1,4 +1,4 @@
-from queue import PriorityQueue
+import heapq
 
 from graph import Graph
 from models import Connection
@@ -46,6 +46,18 @@ class Algo:
                 the end zone is unreachable or when no schedule fits
                 inside the time horizon.
         """
+        unreachable = self.graph.unreachable_hubs()
+        if unreachable:
+            raise ValueError(
+                "Disconnected graph — the following zones are not "
+                + "reachable from the start zone: "
+                + ", ".join(unreachable)
+            )
+        if not self.graph.is_end_reachable():
+            raise ValueError(
+                "End zone unreachable (blocked by a blocked zone)"
+            )
+
         self.time_horizon = self.graph.hub_count * 2 * nb_drones
         start, end = self.graph.get_route_endpoints()
 
@@ -85,7 +97,7 @@ class Algo:
                 )
 
     def _dijkstra(self, start: str, end: str) -> list[State]:
-        """Search the cheapest schedule for one drone.
+        """Search the cheapest route for one drone.
 
         States are (zone, turn) pairs and are popped by increasing turn
         first, so the first time the end zone comes out of the queue it
@@ -101,14 +113,13 @@ class Algo:
             The route as (zone, turn) states, or an empty list when the
             end zone cannot be reached within the time horizon.
         """
-        priority_queue: PriorityQueue[tuple[int, float, str]] = PriorityQueue()
-        priority_queue.put((0, 0.0, start))
+        priority_queue: list[tuple[int, float, str]] = [(0, 0.0, start)]
 
         best_cost: dict[State, float] = {(start, 0): 0}
         came_from: dict[State, State | None] = {(start, 0): None}
 
-        while not priority_queue.empty():
-            turn, cost, hub = priority_queue.get()
+        while priority_queue:
+            turn, cost, hub = heapq.heappop(priority_queue)
 
             if hub == end:
                 return self._rebuild_route(came_from, (hub, turn))
@@ -133,13 +144,15 @@ class Algo:
                 if next_cost < best_cost.get(
                     (next_hub, next_turn), float("inf")
                 ):
-                    priority_queue.put((next_turn, next_cost, next_hub))
+                    heapq.heappush(
+                        priority_queue, (next_turn, next_cost, next_hub)
+                    )
                     best_cost[(next_hub, next_turn)] = next_cost
                     came_from[(next_hub, next_turn)] = (hub, turn)
 
             wait_turn = turn + 1
             if not self._hub_full(hub, wait_turn):
-                priority_queue.put((wait_turn, cost, hub))
+                heapq.heappush(priority_queue, (wait_turn, cost, hub))
                 best_cost[(hub, wait_turn)] = cost
                 came_from[(hub, wait_turn)] = (hub, turn)
 
@@ -186,17 +199,17 @@ class Algo:
         )
 
     def _hub_full(self, hub_name: str, turn: int) -> bool:
-        """Tell whether a zone is already full at a given turn.
+        """Check if waiting in this zone at this turn would overbook it.
 
-        Used to decide if a drone is allowed to wait in place. The start
-        and end zones are never full.
+        Only gates the "stay in place" move — start_hub and end_hub are
+        exempt since their capacity is unlimited.
 
         Args:
-            hub_name: Name of the zone to test.
-            turn: Turn the drone would occupy the zone.
+            hub_name: Zone the drone would wait in.
+            turn: Turn it would occupy that zone.
 
         Returns:
-            True if the zone has no room left at that turn.
+            True if there's no room left there at that turn.
         """
         hub = self.graph.get_hub(hub_name)
         if hub.type in ("start_hub", "end_hub"):
@@ -206,17 +219,18 @@ class Algo:
 
     @staticmethod
     def _connection_key(a: str, b: str) -> tuple[str, str]:
-        """Build a direction independent key for a link.
+        """Normalize a link's two endpoints into one direction-free key.
 
-        Links are bidirectional, so 'a-b' and 'b-a' must share the same
-        reservations. Sorting the two names gives one key for both.
+        A link is bidirectional, so a drone going a→b must book the
+        same slot as one going b→a. Sorting the pair guarantees both
+        directions hash to the same key.
 
         Args:
-            a: Name of one end of the link.
-            b: Name of the other end of the link.
+            a: One end of the link.
+            b: The other end of the link.
 
         Returns:
-            The two names as an alphabetically ordered tuple.
+            (a, b) if a comes first alphabetically, (b, a) otherwise.
         """
         return (a, b) if a < b else (b, a)
 
@@ -224,15 +238,16 @@ class Algo:
     def _rebuild_route(
         came_from: dict[State, State | None], end_state: State
     ) -> list[State]:
-        """Walk the parent links back to rebuild a route.
+        """Retrace came_from from the goal back to the start state.
 
         Args:
-            came_from: Parent state of every state the search reached.
-            end_state: The (zone, turn) state the drone arrived on.
+            came_from: Maps each visited state to whatever state led to
+                it (None for the start).
+            end_state: The (zone, turn) the search stopped on.
 
         Returns:
-            The route in travel order, from the start state to
-            end_state.
+            The path from start to end_state, in travel order — the
+            walk itself goes backward, hence the final reverse.
         """
         route: list[State] = []
 
