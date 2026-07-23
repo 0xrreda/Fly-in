@@ -4,6 +4,19 @@ from models import Connection, Hub, MapConfig
 
 
 class ConfigSyntaxError(Exception):
+    """A map file could not be parsed.
+
+    Carries the offending line so the message can point at the exact
+    place the error came from.
+
+    Attributes:
+        line: Number of the line that failed, starting at 1.
+        file_name: Path of the map file being read.
+        source: Raw text of the offending line.
+        message: Short description of what went wrong.
+        hint: Optional longer explanation of the expected format.
+    """
+
     def __init__(
         self,
         line: int,
@@ -12,6 +25,15 @@ class ConfigSyntaxError(Exception):
         message: str,
         hint: str | None = None,
     ) -> None:
+        """Record where and why parsing failed.
+
+        Args:
+            line: Number of the line that failed, starting at 1.
+            file_name: Path of the map file being read.
+            source: Raw text of the offending line.
+            message: Short description of what went wrong.
+            hint: Optional longer explanation of the expected format.
+        """
         self.line: int = line
         self.file_name: str = file_name
         self.source: str = source
@@ -21,6 +43,12 @@ class ConfigSyntaxError(Exception):
         super().__init__(message)
 
     def __str__(self) -> str:
+        """Render the error with the guilty line and an optional hint.
+
+        Returns:
+            A multi line message showing the file, the line number and
+            the source line the error was found on.
+        """
         message = self.args[0]
 
         parts = [
@@ -37,6 +65,18 @@ class ConfigSyntaxError(Exception):
 
 
 class ConfigParser:
+    """Reads a map file and validates it into a MapConfig.
+
+    The file is read line by line. Every zone must be declared before a
+    connection may reference it, and any syntax or validation problem is
+    reported as a ConfigSyntaxError naming the offending line.
+
+    Attributes:
+        VALID_METADATA_KEYS: Metadata keys accepted for zones and for
+            connections.
+        VALID_ZONE_NAMES: The four accepted zone types.
+    """
+
     VALID_METADATA_KEYS: dict[str, frozenset[str]] = {
         "hub": frozenset(
             {
@@ -52,15 +92,45 @@ class ConfigParser:
     )
 
     def __init__(self) -> None:
+        """Create a parser with an empty set of seen connections."""
         self.used_connections: set[tuple[str, str]] = set()
 
     @staticmethod
     def _loads_file(path: str) -> list[str]:
+        """Read every line of a map file.
+
+        Args:
+            path: Path of the map file to read.
+
+        Returns:
+            The lines of the file, newline characters included.
+
+        Raises:
+            OSError: If the file cannot be opened or read.
+        """
         with open(path) as config_file:
             return config_file.readlines()
 
     @staticmethod
     def _parse_meta_attrs(keyword: str, meta_attrs: str) -> dict[str, Any]:
+        """Parse the 'key=value' pairs of a metadata block.
+
+        Keys are checked against the ones the keyword accepts, and a key
+        may not be repeated on the same line. Tags may appear in any
+        order.
+
+        Args:
+            keyword: Keyword the metadata belongs to, used to pick the
+                accepted key set.
+            meta_attrs: Content of the brackets, without the brackets.
+
+        Returns:
+            The parsed pairs, values kept as strings.
+
+        Raises:
+            ValueError: If a pair is malformed, uses an unknown key, has
+                an invalid value or repeats a key.
+        """
         attrs: dict[str, Any] = {}
         used_attrs: set[str] = set()
 
@@ -101,6 +171,19 @@ class ConfigParser:
     def _split_attrs(
         self, keyword: str, attrs: str
     ) -> tuple[str, dict[str, Any]]:
+        """Split a line body into its plain part and its metadata.
+
+        Args:
+            keyword: Keyword the line starts with.
+            attrs: Everything written after the keyword's colon.
+
+        Returns:
+            A tuple with the text before the brackets and the parsed
+            metadata, the metadata being empty when no block is present.
+
+        Raises:
+            ValueError: If a metadata block is opened but never closed.
+        """
         if "[" not in attrs:
             return attrs, {}
 
@@ -116,6 +199,23 @@ class ConfigParser:
         return attrs, self._parse_meta_attrs(keyword, meta_attrs[:-1])
 
     def parse(self, path: str = "maps/easy/01_linear_path.txt") -> MapConfig:
+        """Read a map file and validate it into a MapConfig.
+
+        Comments and blank lines are skipped. The drone count must come
+        before any zone or connection, zone names must be unique, and a
+        connection may only reference zones already declared.
+
+        Args:
+            path: Path of the map file to parse.
+
+        Returns:
+            The validated map configuration.
+
+        Raises:
+            ConfigSyntaxError: If a line is malformed or invalid.
+            ValueError: If the map has no start or no end zone.
+            OSError: If the file cannot be opened or read.
+        """
         config = MapConfig()
         used_hubs: set[str] = set()
         used_coordinates: set[tuple[int, int]] = set()
@@ -307,6 +407,19 @@ class ConfigParser:
         return config
 
     def used_connection(self, source: str, target: str) -> bool:
+        """Tell whether a link was already declared, and record it.
+
+        Links are bidirectional, so 'a-b' and 'b-a' count as the same
+        connection and the names are sorted before being stored.
+
+        Args:
+            source: Name of one end of the link.
+            target: Name of the other end of the link.
+
+        Returns:
+            True if the link had already been seen, False otherwise. In
+            the second case the link is remembered for later calls.
+        """
         conn = (source, target) if source < target else (target, source)
         if conn in self.used_connections:
             return True
